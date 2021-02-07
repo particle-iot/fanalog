@@ -1,0 +1,11 @@
+[package]
+name = "fanalog"
+version = "0.1.0"
+authors = ["Todd Stellanova <tstellanova@users.noreply.github.com>"]
+edition = "2018"
+description = "Collect log files from multiple serial ports and forward to remote syslog."
+
+[dependencies]
+serialport = "4.0.0"
+syslog = "5.0.0"
+
