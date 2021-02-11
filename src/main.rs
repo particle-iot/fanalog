@@ -1,72 +1,142 @@
 
-use serialport::{available_ports, SerialPortType};
-use std::collections::HashMap;
+use serialport::{available_ports,  SerialPort, SerialPortType};
+use std::collections::{HashMap};
+// use clap::{App, AppSettings, Arg};
+use std::env;
+use std::thread;
+use std::time::{Duration, SystemTime};
+use std::ops::Sub;
+
+const  MIN_BAUD_RATE:u32 = 115200;
+const  PERIODIC_CHECK_TIME:Duration =  Duration::from_millis(125);
+
+/// Collect a list of ports that we're interested in
+fn collect_available_ports(available_set: &mut HashMap<String, String>) {
+  if let Ok(avail_ports) = available_ports() {
+    for port in avail_ports {
+
+      match port.port_type {
+        SerialPortType::UsbPort(info) => {
+          if !available_set.contains_key(&port.port_name) {
+            //add to list
+            let sn_str = info.serial_number.unwrap_or("sn_unknown".to_string());
+            // println!("sn_str: {}", sn_str);
+            available_set.insert(port.port_name.clone(), sn_str);
+            // println!("adding: {}", port.port_name);
+
+            // println!("    Type: USB");
+            // println!("    VID:{:04x} PID:{:04x}", info.vid, info.pid);
+            // println!(
+            //   "     Serial Number: {}",
+            //   info.serial_number.as_ref().map_or("", String::as_str)
+            // );
+            // println!(
+            //   "      Manufacturer: {}",
+            //   info.manufacturer.as_ref().map_or("", String::as_str)
+            // );
+            // println!(
+            //   "           Product: {}",
+            //   info.product.as_ref().map_or("", String::as_str)
+            // );
+
+          }
+        }
+        _ => {
+          println!("   Ignored Port: {}", port.port_name);
+        }
+
+      }
+
+    }
+  }
+}
+
+/// Given a list of available ports, add and remove serial ports from the active pool
+fn maintain_active_port_list(available_set: &HashMap<String, String>, active_ports: &mut HashMap<String, Box<dyn SerialPort>>) {
+  // first remove any active ports that went inactive
+  let mut remove_list = Vec::new();
+  for (port_name, _port_info) in active_ports.iter() {
+    if !available_set.contains_key(port_name) {
+      //TODO need to close these ports first?
+      remove_list.push(port_name.clone());
+    }
+  }
+  for remove_name in remove_list {
+    println!("removing: {}", remove_name);
+    active_ports.remove(&remove_name);
+  }
+
+  // now add any newly-available items
+  for (port_name, _device_id) in available_set {
+    if !active_ports.contains_key(port_name) {
+
+      let port_res = serialport::new(port_name, MIN_BAUD_RATE)
+        .timeout(Duration::from_millis(1))
+        .open();
+      if let Ok(port) = port_res {
+        active_ports.insert(port_name.clone(), port);
+        println!("added: {}", port_name);
+      }
+      else {
+        eprintln!("couldn't open port: {}", port_name);
+      }
+    }
+  }
+}
 
 
 fn main() {
-  println!("fanalog");
+  eprintln!("fanalog");
+  let unknown_device_id = "device_id_unknown".to_string();
+  let mut serial_buf: Vec<u8> = vec![0; 1024];
 
-  let mut active_ports = HashMap::new();
+  let collector_endpoint_url = env::var("COLLECTOR_ENDPOINT_URL").unwrap();
+  let mut active_ports_list = HashMap::new();
+  let mut last_port_maintenance = SystemTime::now().sub(PERIODIC_CHECK_TIME);
+
+  let mut available_ports_list = HashMap::new();
+
+  // let client = reqwest::Client::new();
+  let client = reqwest::blocking::Client::new();
+
   loop {
-    // TODO check for newly-available ports
-    if let Ok(avail_ports) = available_ports() {
-	let mut cur_avail_ports = HashMap::new();
-	for port in avail_ports {
- //           cur_avail_ports.insert ();
-
-	  if !active_ports.contains_key(&port.port_name) {
-            println!("inserted: {}",port.port_name );
-          }
-        }
-    }     
-    // 
-  }
-
-/*
-    match available_ports() {
-        Ok(ports) => {
-            match ports.len() {
-                0 => println!("No ports found."),
-                1 => println!("Found 1 port:"),
-                n => println!("Found {} ports:", n),
-            };
-            for p in ports {
-                println!("  {}", p.port_name);
-                match p.port_type {
-                    SerialPortType::UsbPort(info) => {
-                        println!("    Type: USB");
-                        println!("    VID:{:04x} PID:{:04x}", info.vid, info.pid);
-                        println!(
-                            "     Serial Number: {}",
-                            info.serial_number.as_ref().map_or("", String::as_str)
-                        );
-                        println!(
-                            "      Manufacturer: {}",
-                            info.manufacturer.as_ref().map_or("", String::as_str)
-                        );
-                        println!(
-                            "           Product: {}",
-                            info.product.as_ref().map_or("", String::as_str)
-                        );
-                    }
-                    SerialPortType::BluetoothPort => {
-                        println!("    Type: Bluetooth");
-                    }
-                    SerialPortType::PciPort => {
-                        println!("    Type: PCI");
-                    }
-                    SerialPortType::Unknown => {
-                        println!("    Type: Unknown");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("{:?}", e);
-            eprintln!("Error listing serial ports");
-        }
+    // periodic port list maintenance
+    let sys_time = SystemTime::now();
+    let maintanance_gap = sys_time.duration_since(last_port_maintenance).unwrap_or(PERIODIC_CHECK_TIME);
+    if maintanance_gap >= PERIODIC_CHECK_TIME {
+      available_ports_list = HashMap::new(); //clear list
+      collect_available_ports(&mut available_ports_list);
+      maintain_active_port_list(&available_ports_list, &mut active_ports_list);
+      last_port_maintenance = sys_time;
+    }
+    else {
+      thread::yield_now();
     }
 
-  */
+    //println!("available_ports_list: {:?}", available_ports_list);
+
+    // TODO parallelize? with eg crossbeam
+    for (port_name, port) in &mut active_ports_list {
+      // read timeout should be preconfigured to 1 ms
+      if let Ok(read_size) = port.read(serial_buf.as_mut_slice()) {
+        if read_size > 0 {
+          //TODO cache this device ID
+          let device_id = available_ports_list.get(port_name).unwrap_or(&unknown_device_id);
+          let log_line = String::from_utf8_lossy( &serial_buf[..read_size] );
+          let body = format!("{} [{}]: {}", device_id,  read_size, log_line);
+
+          let _res = client.post(&collector_endpoint_url)
+            .body(body)
+            .send();
+
+        }
+      }
+    }
+
+  }
+
 
 }
+
+
+
