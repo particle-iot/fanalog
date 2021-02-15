@@ -19,10 +19,10 @@ fn collect_available_ports(available_set: &mut HashMap<String, String>) {
         SerialPortType::UsbPort(info) => {
           if !available_set.contains_key(&port.port_name) {
             //add to list
-            let sn_str = info.serial_number.unwrap_or("sn_unknown".to_string());
+            let sn_str = info.serial_number.unwrap_or(port.port_name.clone());
             // println!("sn_str: {}", sn_str);
             available_set.insert(port.port_name.clone(), sn_str);
-            // println!("adding: {}", port.port_name);
+            // println!("adding: {} {}", port.port_name, sn_str);
 
             // println!("    Type: USB");
             // println!("    VID:{:04x} PID:{:04x}", info.vid, info.pid);
@@ -42,7 +42,7 @@ fn collect_available_ports(available_set: &mut HashMap<String, String>) {
           }
         }
         _ => {
-          println!("   Ignored Port: {}", port.port_name);
+          //println!("   Ignored Port: {}", port.port_name);
         }
 
       }
