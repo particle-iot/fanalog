@@ -71,7 +71,7 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
     if !active_ports.contains_key(port_name) {
 
       let port_res = serialport::new(port_name, MIN_BAUD_RATE)
-        .timeout(Duration::from_millis(1))
+        .timeout(Duration::from_millis(0))
         .open();
       if let Ok(port) = port_res {
         active_ports.insert(port_name.clone(), port);
@@ -109,17 +109,16 @@ fn main() {
       maintain_active_port_list(&available_ports_list, &mut active_ports_list);
       last_port_maintenance = sys_time;
     }
-    else {
-      thread::yield_now();
-    }
 
     //println!("available_ports_list: {:?}", available_ports_list);
 
+    let mut msg_count: u32 = 0;
     // TODO parallelize? with eg crossbeam
     for (port_name, port) in &mut active_ports_list {
       // read timeout should be preconfigured to 1 ms
       if let Ok(read_size) = port.read(serial_buf.as_mut_slice()) {
         if read_size > 0 {
+          msg_count += 1;
           //TODO cache this device ID
           let device_id = available_ports_list.get(port_name).unwrap_or(&unknown_device_id);
           let log_line = String::from_utf8_lossy( &serial_buf[..read_size] );
@@ -131,6 +130,10 @@ fn main() {
 
         }
       }
+    }
+
+    if 0 == msg_count {
+      thread::yield_now();
     }
 
   }
