@@ -7,8 +7,12 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 use std::ops::Sub;
 
-const  MIN_BAUD_RATE:u32 = 115200;
-const  PERIODIC_CHECK_TIME:Duration =  Duration::from_millis(125);
+/// Largest chunk of bytes to read from serial port in one read
+const MAX_SERIAL_BUF_READ: usize = 2048;
+/// Minimum acceptable baud rate
+const MIN_BAUD_RATE:u32 = 115200;
+/// How long to wait between checks for serial devices plugged / unplugged
+const PERIODIC_CHECK_TIME:Duration =  Duration::from_millis(500);
 
 /// Collect a list of ports that we're interested in
 fn collect_available_ports(available_set: &mut HashMap<String, String>) {
@@ -70,6 +74,8 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
   for (port_name, _device_id) in available_set {
     if !active_ports.contains_key(port_name) {
 
+      // use zero timeout: read only what's immediately available in the serial buffer,
+      // don't wait for additional data to arrive
       let port_res = serialport::new(port_name, MIN_BAUD_RATE)
         .timeout(Duration::from_millis(0))
         .open();
@@ -88,15 +94,20 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
 fn main() {
   eprintln!("fanalog");
   let unknown_device_id = "device_id_unknown".to_string();
-  let mut serial_buf: Vec<u8> = vec![0; 1024];
+  let mut serial_buf: Vec<u8> = vec![0; MAX_SERIAL_BUF_READ];
 
-  let collector_endpoint_url = env::var("COLLECTOR_ENDPOINT_URL").unwrap();
+  let endpoint_url_res = env::var("COLLECTOR_ENDPOINT_URL");
+  if !endpoint_url_res.is_ok() {
+    eprintln!("You must define an environment variable eg `export COLLECTOR_ENDPOINT_URL=foo`");
+    return;
+  }
+
+  let collector_endpoint_url = endpoint_url_res.unwrap();
   let mut active_ports_list = HashMap::new();
   let mut last_port_maintenance = SystemTime::now().sub(PERIODIC_CHECK_TIME);
 
   let mut available_ports_list = HashMap::new();
 
-  // let client = reqwest::Client::new();
   let client = reqwest::blocking::Client::new();
 
   loop {
@@ -115,7 +126,7 @@ fn main() {
     let mut msg_count: u32 = 0;
     // TODO parallelize? with eg crossbeam
     for (port_name, port) in &mut active_ports_list {
-      // read timeout should be preconfigured to 1 ms
+      // read timeout should be preconfigured to be as short as possible
       if let Ok(read_size) = port.read(serial_buf.as_mut_slice()) {
         if read_size > 0 {
           msg_count += 1;
