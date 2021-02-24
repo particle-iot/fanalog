@@ -8,7 +8,7 @@ and forwards these logs to a remote logging endpoint via a webhook URL.
 
 ## Installing and Running
 
-Binaries for multiple platforms are currently provided in (releases)[./releases]).
+Binaries for multiple platforms are currently provided (on github) in [releases](./releases).
 You can simply download the release archive, uncompress it, and place the binary somewhere in your path.
 
 In your shell you will need to export an environment variable 
@@ -51,9 +51,10 @@ or by moving eg `/target/release/fanalog` to somewhere in your `$PATH`
   Make sure you also have the development packages of openssl installed.
   For example, `libssl-dev` on Ubuntu or `openssl-devel` on Fedora.
 ```
-
   
 Follow the directions to install required SSL libraries.
+For example, on RPi4 running Rasbian, this worked for me: 
+`sudo apt-get install libssl-dev`
 
 
 
