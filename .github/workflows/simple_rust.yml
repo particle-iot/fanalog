@@ -13,7 +13,6 @@ jobs:
           toolchain: stable
           target: armv7-unknown-linux-gnueabihf
           override: true
-      - uses: actions/checkout@v2
       - name: Instal libudev
         run: sudo apt-get install -y libudev-dev
       - uses: actions-rs/cargo@v1
