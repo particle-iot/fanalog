@@ -1,7 +1,6 @@
 
 use serialport::{available_ports,  SerialPort, SerialPortType};
 use std::collections::{HashMap};
-// use clap::{App, AppSettings, Arg};
 use std::env;
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -138,7 +137,7 @@ fn main() {
           let _res = client.post(&collector_endpoint_url)
             .body(body)
             .send();
-
+	//TODO report errors to local log
         }
       }
     }
