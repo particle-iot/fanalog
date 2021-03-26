@@ -102,6 +102,14 @@ fn main() {
   }
 
   let collector_endpoint_url = endpoint_url_res.unwrap();
+  if collector_endpoint_url.len() < 4 {
+    eprintln!("`COLLECTOR_ENDPOINT_URL` environment variable is empty: `{}`", collector_endpoint_url);
+    return;
+  }
+  else {
+    println!("COLLECTOR_ENDPOINT_URL valid!");
+  }
+
   let mut active_ports_list = HashMap::new();
   let mut last_port_maintenance = SystemTime::now().sub(PERIODIC_CHECK_TIME);
 
@@ -134,16 +142,22 @@ fn main() {
           let log_line = String::from_utf8_lossy( &serial_buf[..read_size] );
           let body = format!("{} [{}]: {}", device_id,  read_size, log_line);
 
-          let _res = client.post(&collector_endpoint_url)
+          let posting_res = client.post(&collector_endpoint_url)
             .body(body)
             .send();
-	//TODO report errors to local log
+          if posting_res.is_err() {
+            eprintln!("reporting error: {:?}",posting_res);
+          }
         }
       }
     }
 
-    if 0 == msg_count {
-      thread::yield_now();
+    // If there are no active ports, sleep for a while
+    if 0 == active_ports_list.len() {
+      thread::sleep(PERIODIC_CHECK_TIME);
+    }
+    else if 0 == msg_count {
+      thread::sleep(Duration::from_millis(5));
     }
 
   }
