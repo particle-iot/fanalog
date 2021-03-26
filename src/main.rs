@@ -5,6 +5,8 @@ use std::env;
 use std::thread;
 use std::time::{Duration, SystemTime};
 use std::ops::Sub;
+// use async_std::task;
+use tokio::task;
 
 /// Largest chunk of bytes to read from serial port in one read
 const MAX_SERIAL_BUF_READ: usize = 2048;
@@ -90,7 +92,8 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
 }
 
 
-fn main() {
+#[tokio::main]
+async fn main()  {
   eprintln!("fanalog");
   let unknown_device_id = "device_id_unknown".to_string();
   let mut serial_buf: Vec<u8> = vec![0; MAX_SERIAL_BUF_READ];
@@ -131,7 +134,9 @@ fn main() {
     //println!("available_ports_list: {:?}", available_ports_list);
 
     let mut msg_count: u32 = 0;
-    // TODO parallelize? with eg crossbeam
+
+    let mut reporting_handles = Vec::new();
+
     for (port_name, port) in &mut active_ports_list {
       // read timeout should be preconfigured to be as short as possible
       if let Ok(read_size) = port.read(serial_buf.as_mut_slice()) {
@@ -142,14 +147,24 @@ fn main() {
           let log_line = String::from_utf8_lossy( &serial_buf[..read_size] );
           let body = format!("{} [{}]: {}", device_id,  read_size, log_line);
 
-          let posting_res = client.post(&collector_endpoint_url)
-            .body(body)
-            .send();
-          if posting_res.is_err() {
-            eprintln!("reporting error: {:?}",posting_res);
-          }
+          let my_client = client.clone();
+          let target_url = collector_endpoint_url.clone();
+          let post_handle = task::spawn(async move {
+            let posting_res = my_client.post(&target_url)
+              .body(body)
+              .send();
+            if posting_res.is_err() {
+              eprintln!("reporting error: {:?}", posting_res);
+            }
+          });
+          reporting_handles.push(post_handle);
+
         }
       }
+    }
+
+    for handle in reporting_handles {
+      let _status = handle.await;
     }
 
     // If there are no active ports, sleep for a while
