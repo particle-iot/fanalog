@@ -5,6 +5,8 @@ use std::env;
 use std::thread;
 use std::time::{Duration, SystemTime};
 use std::ops::Sub;
+use std::collections::VecDeque;
+use std::sync::{Mutex, Arc};
 
 /// Largest chunk of bytes to read from serial port in one read
 const MAX_SERIAL_BUF_READ: usize = 2048;
@@ -12,6 +14,42 @@ const MAX_SERIAL_BUF_READ: usize = 2048;
 const MIN_BAUD_RATE:u32 = 115200;
 /// How long to wait between checks for serial devices plugged / unplugged
 const PERIODIC_CHECK_TIME:Duration =  Duration::from_millis(500);
+
+/// Used to queue up log line reports and send them asynchronously to the log collector
+struct AsyncLogReporter {
+  report_queue: Mutex<VecDeque<String>>,
+  client: reqwest::blocking::Client,
+  target_url: String,
+}
+
+impl AsyncLogReporter {
+  /// Add a report to the queue to be sent
+  fn add_report(&self, report: &String) {
+    if let Ok(mut queue) = self.report_queue.lock() {
+     queue.push_back(report.clone());
+    }
+  }
+
+  /// Continuously report queued logs to log server
+  fn run_forever(&self) {
+    loop {
+      if let Ok(mut queue) = self.report_queue.lock() {
+        if let Some(report) = queue.pop_front() {
+          //println!("{}",report);
+          let posting_res = self.client.post(&self.target_url)
+            .body(report)
+            .send();
+          if posting_res.is_err() {
+            eprintln!("reporting error: {:?}",posting_res);
+          }
+        }
+      }
+      else {
+        thread::yield_now();
+      }
+    }
+  }
+}
 
 /// Collect a list of ports that we're interested in
 fn collect_available_ports(available_set: &mut HashMap<String, String>) {
@@ -60,7 +98,6 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
   let mut remove_list = Vec::new();
   for (port_name, _port_info) in active_ports.iter() {
     if !available_set.contains_key(port_name) {
-      //TODO need to close these ports first?
       remove_list.push(port_name.clone());
     }
   }
@@ -76,7 +113,7 @@ fn maintain_active_port_list(available_set: &HashMap<String, String>, active_por
       // use zero timeout: read only what's immediately available in the serial buffer,
       // don't wait for additional data to arrive
       let port_res = serialport::new(port_name, MIN_BAUD_RATE)
-        .timeout(Duration::from_millis(0))
+        .timeout(Duration::from_millis(1))
         .open();
       if let Ok(port) = port_res {
         active_ports.insert(port_name.clone(), port);
@@ -110,12 +147,23 @@ fn main() {
     println!("COLLECTOR_ENDPOINT_URL valid!");
   }
 
+  let client = reqwest::blocking::Client::new();
+
+  let report_actor = AsyncLogReporter {
+    report_queue: Default::default(),
+    client,
+    target_url: collector_endpoint_url,
+  };
+
   let mut active_ports_list = HashMap::new();
   let mut last_port_maintenance = SystemTime::now().sub(PERIODIC_CHECK_TIME);
-
   let mut available_ports_list = HashMap::new();
 
-  let client = reqwest::blocking::Client::new();
+  let reporter_wrap = Arc::new(report_actor);
+  let bg_reporter = Arc::clone(&reporter_wrap);
+  thread::spawn(move || {
+    bg_reporter.run_forever();
+  });
 
   loop {
     // periodic port list maintenance
@@ -128,10 +176,8 @@ fn main() {
       last_port_maintenance = sys_time;
     }
 
-    //println!("available_ports_list: {:?}", available_ports_list);
-
     let mut msg_count: u32 = 0;
-    // TODO parallelize? with eg crossbeam
+
     for (port_name, port) in &mut active_ports_list {
       // read timeout should be preconfigured to be as short as possible
       if let Ok(read_size) = port.read(serial_buf.as_mut_slice()) {
@@ -140,14 +186,9 @@ fn main() {
           //TODO cache this device ID
           let device_id = available_ports_list.get(port_name).unwrap_or(&unknown_device_id);
           let log_line = String::from_utf8_lossy( &serial_buf[..read_size] );
-          let body = format!("{} [{}]: {}", device_id,  read_size, log_line);
-
-          let posting_res = client.post(&collector_endpoint_url)
-            .body(body)
-            .send();
-          if posting_res.is_err() {
-            eprintln!("reporting error: {:?}",posting_res);
-          }
+          let time_since = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+          let body = format!("{} {}: {}", device_id,  time_since.as_millis(), log_line);
+          reporter_wrap.add_report(&body);
         }
       }
     }
