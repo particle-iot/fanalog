@@ -14,6 +14,8 @@ const MAX_SERIAL_BUF_READ: usize = 2048;
 const MIN_BAUD_RATE:u32 = 115200;
 /// How long to wait between checks for serial devices plugged / unplugged
 const PERIODIC_CHECK_TIME:Duration =  Duration::from_millis(500);
+/// A minimal pause time to wait if there are no messages to send
+const MINIMAL_PAUSE_TIME:Duration = Duration::from_millis(5);
 
 /// Used to queue up log line reports and send them asynchronously to the log collector
 struct AsyncLogReporter {
@@ -45,7 +47,7 @@ impl AsyncLogReporter {
         }
       }
       else {
-        thread::yield_now();
+        thread::sleep(MINIMAL_PAUSE_TIME);
       }
     }
   }
@@ -198,7 +200,7 @@ fn main() {
       thread::sleep(PERIODIC_CHECK_TIME);
     }
     else if 0 == msg_count {
-      thread::sleep(Duration::from_millis(5));
+      thread::sleep(MINIMAL_PAUSE_TIME);
     }
 
   }
